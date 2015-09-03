@@ -1,5 +1,6 @@
 # Copyright 2012-2014 SUSE Linux Products GmbH
 # Copyright 2012 OpenStack LLC
+# Copyright 2015 Panos Labropoulos
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
@@ -25,7 +26,7 @@ from keystone import identity
 from keystone.identity.backends import ldap as ldap_backend
 from keystone.identity.backends import sql as sql_ident
 from keystone.openstack.common import log
-
+import pam
 CONF = config.CONF
 LOG = log.getLogger(__name__)
 
@@ -61,22 +62,25 @@ class Identity(sql_ident.Identity):
         except TypeError:
             raise AssertionError('Invalid user / password')
         except KeyError:  # if it doesn't have a password, it must be LDAP
+            LOG.debug("If the account doesn't have a password in MySQL, it must be from LDAP")
             conn = None
             try:
-                # get_connection does a bind for us which checks the password
-                conn = self.user.get_connection(self.user._id_to_dn(user_id),
-                                                password)
-                assert conn
+                LOG.debug("Attempting PAM authentication")
+                pcon = pam.pam()
+                pcon_id=user_ref['name']
+                #LOG.debug('Username: %s Password: %s\n' % (pcon_id, password))
+                LOG.debug('Username: %s\n' % (pcon_id))
+                pcon_res=pcon.authenticate(pcon_id, password)
+                if not pcon_res:
+                  LOG.debug("PAM authentication failed.")
+                  raise Exception('Failed to authenticate via PAM')
             except Exception:
                 raise AssertionError('Invalid user / password')
             else:
-                LOG.debug("Authenticated user with LDAP.")
+                LOG.debug("Authenticated user with PAM.")
                 self.domain_aware = False
-            finally:
-                if conn:
-                    conn.unbind_s()
         else:
-            LOG.debug("Authenticated user with SQL.")
+            LOG.debug("Authenticated user %s with SQL."  % (pcon_id) )
             # turn the SQLAlchemy User object into a dict to match what
             # LDAP would return
             user_ref = user_ref.to_dict()
